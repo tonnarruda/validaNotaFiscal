@@ -14,6 +14,8 @@ interface ComparisonResult {
   match: boolean;
 }
 
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+
 function formatCurrency(valor: number) {
   return valor.toLocaleString('pt-BR', { 
     style: 'currency', 
@@ -79,7 +81,7 @@ function App() {
         const formData = new FormData();
         formData.append('file', file);
         try {
-          const response = await fetch('http://localhost:8080/api/notas', {
+          const response = await fetch(`${API_URL}/api/notas`, {
             method: 'POST',
             body: formData,
           });
@@ -112,7 +114,7 @@ function App() {
       const formData = new FormData();
       formData.append('file', excelFile);
       try {
-        const response = await fetch('http://localhost:8080/api/planilha', {
+        const response = await fetch(`${API_URL}/api/planilha`, {
           method: 'POST',
           body: formData,
         });
