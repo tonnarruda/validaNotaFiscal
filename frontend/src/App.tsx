@@ -14,7 +14,8 @@ interface ComparisonResult {
   match: boolean;
 }
 
-const API_URL = process.env.REACT_APP_API_URL || 'https://v0-person-finance-dbkgnvg1q-tonnarrudas-projects.vercel.app';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+console.log('API_URL em produção:', API_URL);
 
 function formatCurrency(valor: number) {
   return valor.toLocaleString('pt-BR', { 
