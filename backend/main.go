@@ -232,8 +232,13 @@ func main() {
 				continue
 			}
 			valorStr := strings.TrimSpace(row[2])
-			valorStr = strings.ReplaceAll(valorStr, ".", "")  // Remove separador de milhar
-			valorStr = strings.ReplaceAll(valorStr, ",", ".") // Troca vírgula por ponto
+			fmt.Println("Valor original:", row[2])
+			fmt.Println("Valor tratado:", valorStr)
+			if strings.Count(valorStr, ",") == 1 {
+				// Formato brasileiro: milhar com ponto, decimal com vírgula
+				valorStr = strings.ReplaceAll(valorStr, ".", "")  // Remove milhar
+				valorStr = strings.ReplaceAll(valorStr, ",", ".") // Troca decimal
+			}
 			valor, err := strconv.ParseFloat(valorStr, 64)
 			if err != nil {
 				errosConversao = append(errosConversao, fmt.Sprintf("Linha %d: valor inválido '%s'", i+1, row[2]))
@@ -293,8 +298,13 @@ func main() {
 				continue
 			}
 			valorStr := strings.TrimSpace(row[2])
-			valorStr = strings.ReplaceAll(valorStr, ".", "")  // Remove separador de milhar
-			valorStr = strings.ReplaceAll(valorStr, ",", ".") // Troca vírgula por ponto
+			fmt.Println("Valor original:", row[2])
+			fmt.Println("Valor tratado:", valorStr)
+			if strings.Count(valorStr, ",") == 1 {
+				// Formato brasileiro: milhar com ponto, decimal com vírgula
+				valorStr = strings.ReplaceAll(valorStr, ".", "")  // Remove milhar
+				valorStr = strings.ReplaceAll(valorStr, ",", ".") // Troca decimal
+			}
 			valor, err := strconv.ParseFloat(valorStr, 64)
 			if err != nil {
 				errosConversao = append(errosConversao, fmt.Sprintf("Linha %d: valor inválido '%s'", i+1, row[2]))
