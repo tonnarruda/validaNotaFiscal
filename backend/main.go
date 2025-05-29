@@ -147,7 +147,7 @@ func extractFromPDF(file *os.File) (NotaFiscal, error) {
 	if err == nil {
 		fmt.Println("\n=== DADOS DA NOTA FISCAL ===")
 		fmt.Println(string(jsonData))
-		fmt.Println("===========================\n")
+		fmt.Println("===========================")
 	}
 
 	return notaFiscal, nil
