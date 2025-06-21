@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,14 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// TokenData representa um token de validação
-type TokenData struct {
-	Email     string    `json:"email"`
-	Token     string    `json:"token"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
-
 // NotaFiscalData representa os dados da nota fiscal a ser salva
 type NotaFiscalData struct {
 	Email         string  `json:"email"`
@@ -34,90 +24,6 @@ type NotaFiscalData struct {
 	ValorServicos float64 `json:"valorServicos"`
 	DataNota      string  `json:"dataNota"`
 	ISSRetido     float64 `json:"issRetido"`
-}
-
-// Map para armazenar tokens temporariamente (em produção, use um banco de dados)
-var tokenStore = make(map[string]TokenData)
-
-// generateToken gera um token aleatório de 6 caracteres
-func generateToken() string {
-	bytes := make([]byte, 3)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)[:6]
-}
-
-// SendValidationToken envia um token de validação para o email
-func SendValidationToken(c *gin.Context) {
-	var request struct {
-		Email string `json:"email" binding:"required,email"`
-	}
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Email inválido"})
-		return
-	}
-
-	// Gerar token
-	token := generateToken()
-
-	// Armazenar token (expira em 10 minutos)
-	tokenData := TokenData{
-		Email:     request.Email,
-		Token:     token,
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(5 * time.Minute),
-	}
-
-	tokenStore[request.Email] = tokenData
-
-	// Em produção, aqui você enviaria o email
-	// Por enquanto, apenas logamos o token
-	log.Printf("Token de validação para %s: %s", request.Email, token)
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Token de validação enviado com sucesso",
-		"token":   token, // Em produção, remova esta linha
-	})
-}
-
-// ValidateToken valida o token enviado pelo usuário
-func ValidateToken(c *gin.Context) {
-	var request struct {
-		Email string `json:"email" binding:"required,email"`
-		Token string `json:"token" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Dados inválidos"})
-		return
-	}
-
-	// Buscar token armazenado
-	tokenData, exists := tokenStore[request.Email]
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token não encontrado"})
-		return
-	}
-
-	// Verificar se o token expirou
-	if time.Now().After(tokenData.ExpiresAt) {
-		delete(tokenStore, request.Email)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token expirado"})
-		return
-	}
-
-	// Verificar se o token está correto
-	if tokenData.Token != request.Token {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token inválido"})
-		return
-	}
-
-	// Token válido - remover do store
-	delete(tokenStore, request.Email)
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Token validado com sucesso",
-	})
 }
 
 // SaveNotaFiscal salva a nota fiscal no sistema
