@@ -6,8 +6,9 @@ const NfValidator = () => {
   const [comparisonData, setComparisonData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [isAddingManually, setIsAddingManually] = useState(false);
   const [newNf, setNewNf] = useState({ cnpj: '', numero: '', valor: '', prestador: '', issRetido: '' });
+  const [searchCompetencia, setSearchCompetencia] = useState('');
+  const [searching, setSearching] = useState(false);
 
   const formatCurrency = (value) => {
     if (typeof value !== 'number') return 'R$ 0,00';
@@ -22,7 +23,87 @@ const NfValidator = () => {
   const handleClearAll = () => {
     setComparisonData([]);
     setError('');
-    setIsAddingManually(false);
+  };
+
+  const handleSearchNotas = async () => {
+    if (!searchCompetencia) {
+      setError('Por favor, informe a competência para buscar.');
+      return;
+    }
+
+    setSearching(true);
+    setError('');
+
+    try {
+      const apiUrl = process.env.REACT_APP_API_URL || '';
+      console.log('Buscando notas fiscais para competência:', searchCompetencia);
+      console.log('URL da API:', `${apiUrl}/buscar-notas-fiscais?competencia=${encodeURIComponent(searchCompetencia)}`);
+      
+      const response = await fetch(`${apiUrl}/buscar-notas-fiscais?competencia=${encodeURIComponent(searchCompetencia)}`);
+
+      console.log('Status da resposta:', response.status);
+      console.log('Headers da resposta:', response.headers);
+
+      if (!response.ok) {
+        let errMsg = 'Erro ao buscar notas fiscais.';
+        try {
+          const errData = await response.json();
+          errMsg = errData.error || errMsg;
+        } catch {
+          const text = await response.text();
+          errMsg = `Erro ${response.status}: ${text}`;
+        }
+        throw new Error(errMsg);
+      }
+
+      const text = await response.text();
+      console.log('Resposta bruta:', text);
+
+      let result;
+      try {
+        result = JSON.parse(text);
+      } catch (parseError) {
+        console.error('Erro ao fazer parse do JSON:', parseError);
+        throw new Error(`Resposta inválida do servidor: ${text.substring(0, 100)}...`);
+      }
+
+      console.log('Resultado parseado:', result);
+      
+      // Converter notas enviadas para o formato da tabela de comparação
+      const notasConvertidas = (result.notas_fiscais || []).map(nota => ({
+        nfCnpj: nota.cnpj || 'N/A',
+        nfPrestador: nota.prestador || 'N/A',
+        nfNumero: nota.numeroNota || 'N/A',
+        nfValor: nota.valorServicos || 0.0,
+        nfIssRetido: nota.issRetido || 0.0,
+        plCnpj: 'N/A',
+        plNumero: 'N/A',
+        plValor: 0.0,
+        status: 'Enviada',
+        dataNota: nota.dataNota || 'N/A',
+        competencia: nota.competencia || 'N/A'
+      }));
+
+      // Adicionar às notas existentes na tabela
+      setComparisonData(prevData => {
+        // Remover notas duplicadas baseado no número da nota
+        const notasExistentes = prevData.filter(item => 
+          !notasConvertidas.some(nova => nova.nfNumero === item.nfNumero)
+        );
+        return [...notasConvertidas, ...notasExistentes];
+      });
+      
+      if (result.total === 0) {
+        setError(`Nenhuma nota fiscal encontrada para a competência ${searchCompetencia}`);
+      } else {
+        setError(''); // Limpar erros anteriores
+      }
+    } catch (err) {
+      console.error('Erro na busca:', err);
+      setError(err.message);
+    } finally {
+      setSearching(false);
+    }
   };
 
   const handleNewNfChange = (e) => {
@@ -44,17 +125,15 @@ const NfValidator = () => {
       plCnpj: 'N/A',
       plNumero: 'N/A',
       plValor: 0.0,
-      status: 'Divergente',
+      status: 'Importada',
     };
     setComparisonData(prevData => [newRow, ...prevData]);
     setNewNf({ cnpj: '', numero: '', valor: '', prestador: '', issRetido: '' });
-    setIsAddingManually(false);
     setError('');
   };
 
   const handleCancelNewNf = () => {
     setNewNf({ cnpj: '', numero: '', valor: '', prestador: '', issRetido: '' });
-    setIsAddingManually(false);
     setError('');
   };
 
@@ -109,7 +188,7 @@ const NfValidator = () => {
                 plCnpj: 'N/A',
                 plNumero: 'N/A',
                 plValor: 0.0,
-                status: 'Divergente',
+                status: 'Importada',
               };
 
               setComparisonData(prevData => {
@@ -213,28 +292,13 @@ const NfValidator = () => {
 
   const getStatusClass = (status) => {
     switch (status) {
-      case 'Convergente': return 'bg-green-100 text-green-800';
+      case 'Validada': return 'bg-green-100 text-green-800';
       case 'Divergente': return 'bg-red-100 text-red-800';
+      case 'Enviada': return 'bg-blue-100 text-blue-800';
+      case 'Importada': return 'bg-yellow-100 text-yellow-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
-
-  const ManualAddRow = () => (
-    <tr className="bg-blue-50 border-b-2 border-blue-200">
-        <td className="p-2"><input name="prestador" value={newNf.prestador} onChange={handleNewNfChange} placeholder="Prestador de Serviços" className="p-2 border rounded w-full"/></td>
-        <td className="p-2"><input name="cnpj" value={newNf.cnpj} onChange={handleNewNfChange} placeholder="CNPJ (NF)" className="p-2 border rounded w-full"/></td>
-        <td className="p-2"><input name="numero" value={newNf.numero} onChange={handleNewNfChange} placeholder="Número da Nota" className="p-2 border rounded w-full"/></td>
-        <td className="p-2"><input name="valor" type="number" value={newNf.valor} onChange={handleNewNfChange} placeholder="Valor Líquido" className="p-2 border rounded w-full"/></td>
-        <td className="p-2"><input name="issRetido" type="number" value={newNf.issRetido} onChange={handleNewNfChange} placeholder="ISS Retido" className="p-2 border rounded w-full"/></td>
-        <td colSpan="2"></td>
-        <td className="p-2 text-center">
-            <div className="flex justify-center items-center gap-2">
-                <button onClick={handleSaveNewNf} className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-3 rounded text-sm">Salvar</button>
-                <button onClick={handleCancelNewNf} className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-3 rounded text-sm">Cancelar</button>
-            </div>
-        </td>
-    </tr>
-  );
 
   return (
     <div className="bg-white p-8 rounded-lg shadow-lg">
@@ -252,11 +316,35 @@ const NfValidator = () => {
       
       {loading && (
         <div className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="text-white text-xl">Processando PDFs...</div>
+            <div className="text-white text-xl">Aguarde enquanto processamos as notas fiscais...</div>
         </div>
       )}
 
       {error && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">{error}</div>}
+
+      {/* Campo de Busca de Notas Enviadas */}
+      <div className="mb-6 flex gap-4 items-end">
+        <div className="flex-1 max-w-xs">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Buscar Notas Enviadas por Competência
+          </label>
+          <input
+            type="text"
+            value={searchCompetencia}
+            onChange={(e) => setSearchCompetencia(e.target.value)}
+            placeholder="Ex: 06/2025"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            disabled={searching}
+          />
+        </div>
+        <button
+          onClick={handleSearchNotas}
+          disabled={searching || !searchCompetencia}
+          className="bg-blue-500 text-white py-3 px-6 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed font-semibold"
+        >
+          {searching ? 'Buscando...' : 'Buscar'}
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <div {...getPdfRootProps()} className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500 bg-gray-50 transition-colors">
@@ -287,7 +375,7 @@ const NfValidator = () => {
             </tr>
           </thead>
           <tbody>
-            {isAddingManually && <ManualAddRow />}
+            
             {comparisonData.length > 0 ? (
               comparisonData.map((item, index) => (
                 <tr key={index} className="border-b hover:bg-gray-50">
@@ -307,13 +395,11 @@ const NfValidator = () => {
                 </tr>
               ))
             ) : (
-              !isAddingManually && (
                 <tr>
                   <td colSpan="7" className="text-center py-10 text-gray-500">
                     Aguardando importação dos arquivos...
                   </td>
                 </tr>
-              )
             )}
           </tbody>
         </table>

@@ -32,6 +32,10 @@ func main() {
 	})
 
 	router.POST("/upload", handlers.DecodeNotaFiscal)
+	router.POST("/send-validation-token", handlers.SendValidationToken)
+	router.POST("/validate-token", handlers.ValidateToken)
+	router.POST("/save-nota-fiscal", handlers.SaveNotaFiscal)
+	router.GET("/buscar-notas-fiscais", handlers.BuscarNotasFiscais)
 
 	log.Println("Servidor iniciado na porta 8080")
 	log.Fatal(router.Run(":8080"))
