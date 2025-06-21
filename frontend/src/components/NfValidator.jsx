@@ -70,7 +70,8 @@ const NfValidator = () => {
     });
 
     try {
-      const response = await fetch('/upload', {
+      const apiUrl = process.env.REACT_APP_API_URL || '';
+      const response = await fetch(`${apiUrl}/upload`, {
         method: 'POST',
         body: formData,
       });
