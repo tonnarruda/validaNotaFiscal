@@ -1,35 +1,38 @@
 package main
 
 import (
+	"NF-DECODER-AI/handlers"
 	"log"
-	"os"
+	"net/http"
 
-	"validaNotaFiscal/api"
-
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	r := gin.Default()
-
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"POST", "GET", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-	}))
-
-	if err := os.MkdirAll("tmp", 0755); err != nil {
-		log.Fatal("Erro ao criar diretório temporário:", err)
+	// Carregar variáveis de ambiente do arquivo .env
+	if err := godotenv.Load("../.env"); err != nil {
+		log.Println("Arquivo .env não encontrado, usando variáveis de ambiente do sistema")
 	}
 
-	api.RegisterRoutes(r)
+	router := gin.Default()
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	r.Run(":" + port)
+	// Configurar CORS global
+	router.Use(func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	})
+
+	router.POST("/upload", handlers.DecodeNotaFiscal)
+
+	log.Println("Servidor iniciado na porta 8080")
+	log.Fatal(router.Run(":8080"))
 }
