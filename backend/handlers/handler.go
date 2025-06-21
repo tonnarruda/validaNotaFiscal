@@ -2,39 +2,54 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/ledongthuc/pdf"
 )
 
 // NFSeData struct holds the extracted data from the invoice.
 type NFSeData struct {
-	CNPJ                  string  `json:"CNPJ (NF)"`
-	NumeroNotaFiscal      string  `json:"Número da Nota (NF)"`
-	ValorLiquido          float64 `json:"Valor (NF)"`
-	DataNotaFiscal        string  `json:"Data da Nota Fiscal"`
-	CompetenciaNotaFiscal string  `json:"Competência da Nota Fiscal"`
-	PrestadorServicos     string  `json:"Prestador de Serviços"`
-	ISSRetido             float64 `json:"ISS Retido"`
-	//TomadorServicos       string  `json:"Tomador de Serviços"`
+	CNPJ                   string  `json:"CNPJ (NF)"`
+	NumeroNotaFiscal       string  `json:"Número da Nota (NF)"`
+	ValorServicos          float64 `json:"Valor dos Serviços"`
+	ValorLiquidoNotaFiscal float64 `json:"Valor Líquido da Nota Fiscal"`
+	DataNotaFiscal         string  `json:"Data da Nota Fiscal"`
+	CompetenciaNotaFiscal  string  `json:"Competência da Nota Fiscal"`
+	PrestadorServicos      string  `json:"Prestador de Serviços"`
+	ISSRetido              float64 `json:"ISS Retido"`
 }
 
 // Structs for OpenAI API
 type OpenAIRequest struct {
-	Model    string          `json:"model"`
-	Messages []OpenAIMessage `json:"messages"`
+	Model     string          `json:"model"`
+	Messages  []OpenAIMessage `json:"messages"`
+	MaxTokens int             `json:"max_tokens"`
 }
+
 type OpenAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string        `json:"role"`
+	Content []interface{} `json:"content"`
 }
+
+type MessageContent struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+type ImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
 type OpenAIResponse struct {
 	Choices []struct {
 		Message struct {
@@ -46,47 +61,50 @@ type OpenAIResponse struct {
 	} `json:"error"`
 }
 
-// extractTextFromPDF reads a PDF and returns its text content.
-func extractTextFromPDF(reader io.ReaderAt, size int64) (string, error) {
-	pdfReader, err := pdf.NewReader(reader, size)
-	if err != nil {
-		return "", err
-	}
-	var textBuilder strings.Builder
-	numPages := pdfReader.NumPage()
-	for i := 1; i <= numPages; i++ {
-		page := pdfReader.Page(i)
-		if page.V.IsNull() {
-			continue
-		}
-		text, err := page.GetPlainText(nil)
-		if err != nil {
-			// Fallback to extract text row by row
-			rows, _ := page.GetTextByRow()
-			for _, row := range rows {
-				for _, word := range row.Content {
-					textBuilder.WriteString(word.S)
-				}
-				textBuilder.WriteString("\n")
-			}
-			continue
-		}
-		textBuilder.WriteString(text)
-	}
-	return textBuilder.String(), nil
-}
-
-// callOpenAI sends the extracted text to OpenAI API for processing.
-func callOpenAI(textContent string, apiKey string) ([]NFSeData, error) {
+// callOpenAI sends the invoice image to OpenAI API for processing.
+func callOpenAI(pdfBytes []byte, apiKey string) ([]NFSeData, error) {
 	var nfseDataList []NFSeData
 
-	systemPrompt := `Você é um especialista em extração de dados de Notas Fiscais de Serviço Eletrônicas (NFS-e) de diferentes prefeituras do Brasil. Sua tarefa é analisar o texto completo da nota e retornar **APENAS** um JSON válido com a seguinte estrutura:
+	// Create a temporary file for the PDF
+	tmpPdfFile, err := os.CreateTemp("", "invoice-*.pdf")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp pdf file: %v", err)
+	}
+	defer os.Remove(tmpPdfFile.Name())
+
+	if _, err := tmpPdfFile.Write(pdfBytes); err != nil {
+		return nil, fmt.Errorf("failed to write to temp pdf file: %v", err)
+	}
+	tmpPdfFile.Close()
+
+	// Convert PDF to image using pdftoppm (from poppler-utils)
+	// We'll just process the first page.
+	outputImagePath := strings.TrimSuffix(tmpPdfFile.Name(), ".pdf")
+	cmd := exec.Command("pdftoppm", "-png", "-f", "1", "-l", "1", tmpPdfFile.Name(), outputImagePath)
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to convert pdf to image: %v. Make sure poppler-utils is installed", err)
+	}
+
+	imageFilePath := outputImagePath + "-1.png"
+	defer os.Remove(imageFilePath)
+
+	// Read the image file
+	imageBytes, err := os.ReadFile(imageFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read image file: %v", err)
+	}
+
+	// Encode the image to base64
+	base64Image := base64.StdEncoding.EncodeToString(imageBytes)
+	imageURL := fmt.Sprintf("data:image/png;base64,%s", base64Image)
+
+	systemPrompt := `Você é um especialista em extração de dados de Notas Fiscais de Serviço Eletrônicas (NFS-e) de diferentes prefeituras do Brasil. Sua tarefa é analisar a imagem de uma nota fiscal e retornar **APENAS** um JSON válido com a seguinte estrutura:
 
 {
   "Prestador de Serviços": "Razão Social ou nome do prestador",
   "CNPJ (NF)": "CNPJ do prestador de serviços",
   "Número da Nota (NF)": "número da nota fiscal",
-  "Valor (NF)": 0.0,
+  "Valor dos Serviços": 0.0,
   "Data da Nota Fiscal": "DD/MM/AAAA",
   "Competência da Nota Fiscal": "MM/AAAA",
   "ISS Retido": 0.0
@@ -94,55 +112,60 @@ func callOpenAI(textContent string, apiKey string) ([]NFSeData, error) {
 
 ### INSTRUÇÕES OBRIGATÓRIAS:
 
-1. **Não escreva nenhum texto além do JSON**. 
+1. **FOCO EXCLUSIVO NO PRESTADOR**: Todos os dados de identificação (Prestador de Serviços, CNPJ) devem ser **exclusivamente** do **PRESTADOR DE SERVIÇOS**. É o erro mais crítico a ser evitado.
 
-2. Os dados devem vir sempre do **DADOS DO PRESTADOR DE SERVIÇOS**:
-   - Use a seção "DADOS DO PRESTADOR DE SERVIÇOS", "EMITENTE", ou similar.
-   - **Ignore completamente a seção "DADOS DO TOMADOR DE SERVIÇOS"** ou qualquer nome que esteja associado ao cliente.
+2. **PROCESSO DE EXTRAÇÃO**:
+   - **PASSO 1: LOCALIZAR O BLOCO DO PRESTADOR**: Antes de extrair qualquer dado, encontre a seção da nota fiscal intitulada **"DADOS DO PRESTADOR DE SERVIÇOS"** ou "EMITENTE".
+   - **PASSO 2: EXTRAIR DADOS DO BLOCO**: Todos os campos a seguir devem ser extraídos **APENAS DE DENTRO DESTE BLOCO**.
+   - **IGNORE COMPLETAMENTE O TOMADOR**: Qualquer informação na seção "DADOS DO TOMADOR DE SERVIÇOS" deve ser ignorada.
 
-3. **CNPJ (NF)**:
-   - Use a seção "DADOS DO PRESTADOR DE SERVIÇOS", "EMITENTE", ou similar.
-   - Procure o CNPJ próximo do NOME DE FANTASIA, Se houver.
-   - Extraia o CNPJ apenas do **prestador de serviços** (exemplo: "CPF/CNPJ: 17.830.029/0001-01").
-   - Procure sempre o **CNPJ do prestador** com base em:
-		- Blocos com o título "DADOS DO PRESTADOR DE SERVIÇOS" ou similares.
+3. **Prestador de Serviços**:
+   - Dentro do bloco do **PRESTADOR**, encontre e extraia a "Razão Social/Nome".
 
-4. **Número da Nota (NF)**:
-   - Busque por "Número da NFS-e", "Número da Nota Fiscal", ou similar.
-   - Priorize sempre o número principal da NFS-e, e **não o número do RPS**.
+4. **CNPJ (NF)**:
+   - Dentro do mesmo bloco do **PRESTADOR**, encontre e extraia o "CPF/CNPJ".
 
-5. **Valor (NF)**:
-   - Use PRIORITARIAMENTE o campo **"Valor Líquido"**.
-   - Se não houver, utilize o campo **"Valor Total", "Valor do Serviço"** ou equivalente.
-   - O número deve ser puro (sem aspas e sem R$ ou vírgulas), ex: 2380.89.
+5. **Número da Nota (NF)**:
+   - Busque por "Número da NFS-e" ou "Número da Nota Fiscal". Priorize o número da NFS-e.
 
-6. **Data da Nota Fiscal**:
-   - Extraia do campo com nome como "Data de Emissão", "Data e Hora da Emissão", ou "Data Fato Gerador".
-   - Use o formato DD/MM/AAAA.
+6. **Valor dos Serviços**:
+   - Use o campo **"Valor do Serviço"** ou **"Valor Total"**.
+   - O número deve ser puro (sem aspas e sem R$), ex: 2380.89.
 
-7. **Competência da Nota Fiscal**:
-   - Busque pelo campo "Competência".
-   - Caso não exista, derive a competência com base na data de emissão (MM/AAAA).
+7. **Data da Nota Fiscal**:
+   - Extraia do campo "Data de Emissão" ou similar. Use o formato DD/MM/AAAA.
 
-8. **Prestador de Serviços**:
-   - Utilize o nome/razão social do **prestador** encontrado na seção adequada, como "Razão Social/Nome" ou "Nome/Nome Empresarial".
+8. **Competência da Nota Fiscal**:
+   - Busque pelo campo "Competência". Se não existir, use o mês/ano da data de emissão.
 
 9. **ISS Retido**:
-   - Busque pelo campo "(-) ISS Retido". Se não houver, o valor deve ser 0.
+   - Busque por "ISS Retido" ou "(-) ISS Retido". Se não houver, o valor é 0.
 
-10. Caso algum campo não seja encontrado:
+10. **Se algum campo não for encontrado**:
     - Use string vazia "" (exceto para campos de valor, que devem ser 0).
 
-11. **Se houver mais de uma nota fiscal no mesmo texto, retorne um array com múltiplos objetos JSON**, um para cada nota.`
+11. **Se houver mais de uma nota fiscal no mesmo texto**, retorne um array com um objeto JSON para cada uma.`
 
-	userPrompt := fmt.Sprintf("Extraia os dados da seguinte nota fiscal e retorne apenas o JSON:\n\n%s", textContent)
+	userPrompt := "Extraia os dados da imagem desta nota fiscal e retorne apenas o JSON."
 
 	reqBody := OpenAIRequest{
 		Model: "gpt-4o",
 		Messages: []OpenAIMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
+			{
+				Role: "system",
+				Content: []interface{}{
+					MessageContent{Type: "text", Text: systemPrompt},
+				},
+			},
+			{
+				Role: "user",
+				Content: []interface{}{
+					MessageContent{Type: "text", Text: userPrompt},
+					MessageContent{Type: "image_url", ImageURL: &ImageURL{URL: imageURL, Detail: "high"}},
+				},
+			},
 		},
+		MaxTokens: 3000,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -231,33 +254,29 @@ func callOpenAI(textContent string, apiKey string) ([]NFSeData, error) {
 		return nil, fmt.Errorf("formato de resposta inesperado da OpenAI: não é JSON nem array. Resposta: %s", jsonContent)
 	}
 
+	// Calculate the net value
+	for i := range nfseDataList {
+		nfseDataList[i].ValorLiquidoNotaFiscal = nfseDataList[i].ValorServicos - nfseDataList[i].ISSRetido
+	}
+
 	// Validate that we have at least some data
-	if len(nfseDataList) > 0 && nfseDataList[0].NumeroNotaFiscal == "" && nfseDataList[0].ValorLiquido == 0 {
-		// Try to extract data using regex patterns as fallback
-		nfseDataList = extractDataFromText(jsonContent)
+	if len(nfseDataList) > 0 && nfseDataList[0].NumeroNotaFiscal == "" && nfseDataList[0].ValorServicos == 0 {
+		// Fallback cannot be text-based anymore.
+		// For now, we'll just log if the response seems empty.
+		log.Printf("Warning: OpenAI response for an image seems empty or invalid: %+v", nfseDataList)
 	}
 
 	return nfseDataList, nil
 }
 
-// extractDataFromText attempts to extract invoice data from text using regex patterns
-func extractDataFromText(text string) []NFSeData {
-	var data []NFSeData
-
-	// This is a fallback method - in practice, the improved prompt should prevent this from being needed
-	// But it provides a safety net for edge cases
-
-	// You could add regex patterns here to extract data from text if needed
-	// For now, we'll return empty data and let the calling function handle the error
-
-	return data
-}
-
-// DecodeNotaFiscal handles multi-file upload and processing.
+// DecodeNotaFiscal handles multi-file upload and processing using a streaming response.
 func DecodeNotaFiscal(c *gin.Context) {
 	c.Header("Access-Control-Allow-Origin", "*")
 	c.Header("Access-Control-Allow-Methods", "POST, OPTIONS")
 	c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
 
 	if c.Request.Method == "OPTIONS" {
 		c.Status(http.StatusOK)
@@ -281,56 +300,42 @@ func DecodeNotaFiscal(c *gin.Context) {
 		return
 	}
 
-	var results []NFSeData
-	var processingErrors []string
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		log.Println("Streaming unsupported!")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Streaming not supported"})
+		return
+	}
 
 	for _, fileHeader := range files {
 		file, err := fileHeader.Open()
 		if err != nil {
-			processingErrors = append(processingErrors, fmt.Sprintf("Erro ao abrir %s: %v", fileHeader.Filename, err))
+			log.Printf("Error opening file %s: %v", fileHeader.Filename, err)
 			continue
 		}
 
 		content, err := io.ReadAll(file)
-		file.Close()
+		file.Close() // Close file immediately after reading
 		if err != nil {
-			processingErrors = append(processingErrors, fmt.Sprintf("Erro ao ler %s: %v", fileHeader.Filename, err))
+			log.Printf("Error reading file %s: %v", fileHeader.Filename, err)
 			continue
 		}
 
-		textContent, err := extractTextFromPDF(bytes.NewReader(content), int64(len(content)))
+		nfseDataList, err := callOpenAI(content, apiKey)
 		if err != nil {
-			processingErrors = append(processingErrors, fmt.Sprintf("Erro ao extrair texto de %s: %v", fileHeader.Filename, err))
+			log.Printf("Error processing %s with OpenAI: %v", fileHeader.Filename, err)
 			continue
 		}
 
-		if textContent != "" {
-			nfseDataList, err := callOpenAI(textContent, apiKey)
+		for _, nfseData := range nfseDataList {
+			jsonData, err := json.Marshal(nfseData)
 			if err != nil {
-				processingErrors = append(processingErrors, fmt.Sprintf("Erro ao processar %s com OpenAI: %v", fileHeader.Filename, err))
+				log.Printf("Error marshalling NFSe data: %v", err)
 				continue
 			}
-			results = append(results, nfseDataList...)
+			// Use a separator to distinguish between JSON objects
+			fmt.Fprintf(c.Writer, "%s\n---\n", jsonData)
+			flusher.Flush()
 		}
 	}
-
-	if len(results) == 0 {
-		errorDetails := strings.Join(processingErrors, "; ")
-		log.Printf("Error processing files: %s", errorDetails)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Não foi possível processar nenhum dos arquivos.",
-			"details": errorDetails,
-		})
-		return
-	}
-
-	resultsJSON, err := json.MarshalIndent(results, "", "  ")
-	if err != nil {
-		log.Printf("Error marshalling results for logging: %v", err)
-		log.Printf("Successfully processed files (unstructured): %+v", results)
-	} else {
-		log.Printf("Successfully processed files:\n%s", string(resultsJSON))
-	}
-
-	c.JSON(http.StatusOK, results)
 }

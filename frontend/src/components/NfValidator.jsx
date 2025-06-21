@@ -80,25 +80,58 @@ const NfValidator = () => {
         throw new Error(errData.error || 'Erro no servidor ao processar PDFs.');
       }
 
-      const nfData = await response.json();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      const newComparisonData = nfData.map(nf => ({
-        nfCnpj: nf['CNPJ (NF)'],
-        nfPrestador: nf['Prestador de Serviços'],
-        nfNumero: nf['Número da Nota (NF)'],
-        nfValor: nf['Valor (NF)'],
-        nfIssRetido: nf['ISS Retido'],
-        plCnpj: 'N/A',
-        plNumero: 'N/A',
-        plValor: 0.0,
-        status: 'Divergente',
-      }));
+      const processStream = async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            setLoading(false);
+            break;
+          }
 
-      setComparisonData(prevData => [...prevData, ...newComparisonData]);
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n---\n');
+          
+          parts.slice(0, -1).forEach(part => {
+            if (part.trim() === '') return;
+            try {
+              const nf = JSON.parse(part);
+              const newNf = {
+                nfCnpj: nf['CNPJ (NF)'],
+                nfPrestador: nf['Prestador de Serviços'],
+                nfNumero: nf['Número da Nota (NF)'],
+                nfValor: nf['Valor Líquido da Nota Fiscal'],
+                nfIssRetido: nf['ISS Retido'],
+                plCnpj: 'N/A',
+                plNumero: 'N/A',
+                plValor: 0.0,
+                status: 'Divergente',
+              };
+
+              setComparisonData(prevData => {
+                const key = `${normalizeString(newNf.nfCnpj)}-${normalizeString(newNf.nfNumero)}`;
+                const exists = prevData.some(item => `${normalizeString(item.nfCnpj)}-${normalizeString(item.nfNumero)}` === key);
+                if (!exists) {
+                  return [...prevData, newNf];
+                }
+                return prevData;
+              });
+            } catch (e) {
+              console.error("Failed to parse JSON chunk", e);
+            }
+          });
+
+          buffer = parts[parts.length - 1];
+        }
+      };
+
+      processStream();
 
     } catch (err) {
       setError(err.message);
-    } finally {
       setLoading(false);
     }
   }, []);
@@ -190,7 +223,7 @@ const NfValidator = () => {
         <td className="p-2"><input name="prestador" value={newNf.prestador} onChange={handleNewNfChange} placeholder="Prestador de Serviços" className="p-2 border rounded w-full"/></td>
         <td className="p-2"><input name="cnpj" value={newNf.cnpj} onChange={handleNewNfChange} placeholder="CNPJ (NF)" className="p-2 border rounded w-full"/></td>
         <td className="p-2"><input name="numero" value={newNf.numero} onChange={handleNewNfChange} placeholder="Número da Nota" className="p-2 border rounded w-full"/></td>
-        <td className="p-2"><input name="valor" type="number" value={newNf.valor} onChange={handleNewNfChange} placeholder="Valor (NF)" className="p-2 border rounded w-full"/></td>
+        <td className="p-2"><input name="valor" type="number" value={newNf.valor} onChange={handleNewNfChange} placeholder="Valor Líquido" className="p-2 border rounded w-full"/></td>
         <td className="p-2"><input name="issRetido" type="number" value={newNf.issRetido} onChange={handleNewNfChange} placeholder="ISS Retido" className="p-2 border rounded w-full"/></td>
         <td colSpan="2"></td>
         <td className="p-2 text-center">
@@ -207,13 +240,6 @@ const NfValidator = () => {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Validador de Notas Fiscais</h1>
         <div className="flex gap-4">
-          <button 
-            onClick={() => setIsAddingManually(true)}
-            disabled={isAddingManually}
-            className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded transition-colors disabled:bg-gray-300"
-          >
-            Adicionar Nota
-          </button>
           <button 
             onClick={handleClearAll}
             className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded transition-colors"
@@ -251,7 +277,7 @@ const NfValidator = () => {
               <th className="py-3 px-4 text-left text-sm font-semibold text-gray-600">Prestador de Serviços</th>
               <th className="py-3 px-4 text-left text-sm font-semibold text-gray-600">CNPJ (NF)</th>
               <th className="py-3 px-4 text-left text-sm font-semibold text-gray-600">Número da Nota (NF)</th>
-              <th className="py-3 px-4 text-left text-sm font-semibold text-gray-600">Valor (NF)</th>
+              <th className="py-3 px-4 text-left text-sm font-semibold text-gray-600">Valor Líquido</th>
               <th className="py-3 px-4 text-left text-sm font-semibold text-gray-600">ISS Retido</th>
               <th className="py-3 px-4 text-left text-sm font-semibold text-gray-600">CNPJ (Planilha)</th>
               <th className="py-3 px-4 text-left text-sm font-semibold text-gray-600">Número da Nota (Planilha)</th>
