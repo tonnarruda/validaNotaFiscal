@@ -35,6 +35,10 @@ func main() {
 	router.POST("/save-nota-fiscal", handlers.SaveNotaFiscal)
 	router.GET("/buscar-notas-fiscais", handlers.BuscarNotasFiscais)
 
+	// Novas rotas para processamento de planilhas
+	router.POST("/process-spreadsheet", handlers.ProcessSpreadsheet)
+	router.POST("/spreadsheet-preview", handlers.GetSpreadsheetPreview)
+
 	log.Println("Servidor iniciado na porta 8080")
 	log.Fatal(router.Run(":8080"))
 }
