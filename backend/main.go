@@ -34,7 +34,6 @@ func main() {
 	router.POST("/upload", handlers.DecodeNotaFiscal)
 	router.POST("/save-nota-fiscal", handlers.SaveNotaFiscal)
 	router.GET("/buscar-notas-fiscais", handlers.BuscarNotasFiscais)
-
 	// Novas rotas para processamento de planilhas
 	router.POST("/process-spreadsheet", handlers.ProcessSpreadsheet)
 	router.POST("/spreadsheet-preview", handlers.GetSpreadsheetPreview)
